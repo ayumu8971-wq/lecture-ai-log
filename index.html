@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>講義ログ AI</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="importmap">
+      {
+        "imports": {
+          "@google/generative-ai": "https://esm.run/@google/generative-ai"
+        }
+      }
+    </script>
+</head>
+<body class="bg-gray-50 min-h-screen pb-10">
+
+    <div class="max-w-md mx-auto px-4 py-6">
+        <header class="mb-8 text-center">
+            <h1 class="text-2xl font-bold text-blue-600">講義ログ AI</h1>
+            <p class="text-sm text-gray-500">音声から要約を自動生成</p>
+        </header>
+
+        <details class="mb-6 bg-white p-4 rounded-lg shadow-sm border border-gray-200" id="apiDetails">
+            <summary class="text-xs text-gray-500 cursor-pointer font-medium">🔑 APIキー設定</summary>
+            <div class="mt-3">
+                <input type="password" id="apiKey" placeholder="AIZA..." 
+                       class="w-full p-2 border rounded text-sm focus:ring-2 focus:ring-blue-500 outline-none">
+            </div>
+        </details>
+
+        <div class="bg-white p-6 rounded-2xl shadow-md space-y-4">
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">講義名</label>
+                <input type="text" id="lectureName" placeholder="例：日本史 第1回" 
+                       class="w-full p-3 border border-gray-300 rounded-xl outline-none">
+            </div>
+
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">音声ファイル</label>
+                <input type="file" id="audioFile" accept="audio/*" class="w-full text-sm">
+            </div>
+
+            <button id="runBtn" class="w-full bg-blue-600 text-white font-bold py-4 rounded-xl shadow-lg active:scale-95">
+                AI解析を開始する
+            </button>
+        </div>
+
+        <div id="loading" class="hidden mt-10 text-center animate-pulse">
+            <div class="text-blue-600 font-bold text-lg">AI解析中...</div>
+            <p class="text-xs text-gray-400 mt-2">1分ほどかかる場合があります</p>
+        </div>
+
+        <div id="resultArea" class="mt-8 space-y-6 hidden">
+            <div class="bg-white p-6 rounded-2xl shadow-md border-l-4 border-green-500">
+                <div class="flex justify-between items-center mb-3">
+                    <h2 class="font-bold text-lg">✨ 要約と要点</h2>
+                    <button id="copySummary" class="text-xs bg-gray-100 px-3 py-1 rounded-full">コピー</button>
+                </div>
+                <div id="summaryText" class="text-gray-700 text-sm whitespace-pre-wrap"></div>
+            </div>
+
+            <div class="bg-white p-6 rounded-2xl shadow-md border-l-4 border-blue-500">
+                <div class="flex justify-between items-center mb-3">
+                    <h2 class="font-bold text-lg">📄 文字起こし全文</h2>
+                    <button id="copyTrans" class="text-xs bg-gray-100 px-3 py-1 rounded-full">コピー</button>
+                </div>
+                <div id="transcriptionText" class="text-gray-600 text-sm max-h-60 overflow-y-auto bg-gray-50 p-3 rounded"></div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import { GoogleGenerativeAI } from "@google/generative-ai";
+
+        const runBtn = document.getElementById('runBtn');
+        const apiKeyInput = document.getElementById('apiKey');
+        const audioInput = document.getElementById('audioFile');
+
+        apiKeyInput.value = localStorage.getItem('gemini_api_key') || '';
+
+        apiKeyInput.addEventListener('input', (e) => {
+            localStorage.setItem('gemini_api_key', e.target.value.trim());
+        });
+
+        async function fileToGenerativePart(file) {
+            const base64EncodedDataPromise = new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result.split(',')[1]);
+                reader.readAsDataURL(file);
+            });
+            return {
+                inlineData: { data: await base64EncodedDataPromise, mimeType: file.type },
+            };
+        }
+
+        runBtn.addEventListener('click', async () => {
+            const key = apiKeyInput.value.trim();
+            const file = audioInput.files[0];
+
+            if (!key) return alert('APIキーを入力してください。');
+            if (!file) return alert('ファイルを選択してください。');
+
+            runBtn.disabled = true;
+            document.getElementById('loading').classList.remove('hidden');
+            document.getElementById('resultArea').classList.add('hidden');
+
+            try {
+                const genAI = new GoogleGenerativeAI(key);
+                // モデル指定
+                const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
+
+                const audioPart = await fileToGenerativePart(file);
+                const lectureName = document.getElementById('lectureName').value || "講義";
+
+                const prompt = `音声を解析し、[TRANSCRIPTION]セクションに文字起こし全文、[SUMMARY]セクションに「${lectureName}」の要約と重要ポイントを箇条書きで出力してください。`;
+
+                const result = await model.generateContent([prompt, audioPart]);
+                const responseText = result.response.text();
+
+                const parts = responseText.split('[SUMMARY]');
+                document.getElementById('transcriptionText').innerText = parts[0].replace('[TRANSCRIPTION]', '').trim();
+                document.getElementById('summaryText').innerText = parts[1] ? parts[1].trim() : "要約失敗";
+                document.getElementById('resultArea').classList.remove('hidden');
+
+            } catch (error) {
+                alert('エラー: ' + error.message);
+            } finally {
+                runBtn.disabled = false;
+                document.getElementById('loading').classList.add('hidden');
+            }
+        });
+
+        document.getElementById('copySummary').onclick = () => {
+            navigator.clipboard.writeText(document.getElementById('summaryText').innerText);
+            alert('要約をコピーしました！');
+        };
+        document.getElementById('copyTrans').onclick = () => {
+            navigator.clipboard.writeText(document.getElementById('transcriptionText').innerText);
+            alert('全文をコピーしました！');
+        };
+    </script>
+</body>
+</html>
